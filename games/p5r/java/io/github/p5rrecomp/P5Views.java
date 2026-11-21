@@ -312,6 +312,8 @@ final class P5Views {
         private String text;
         private final boolean primary; // true = massive crimson/white PLAY slab, false = compact action button
         private boolean warningStyle = false;
+        private boolean primarySlashVisible = true;
+        private int primaryLabelSizeDp = -1;
         private boolean pressed = false;
         private boolean controllerFocused = false;
         private boolean heroSheenEnabled = false;
@@ -338,6 +340,16 @@ final class P5Views {
 
         void setText(String t) {
             this.text = t == null ? "" : t;
+            invalidate();
+        }
+
+        void setPrimarySlashVisible(boolean visible) {
+            primarySlashVisible = visible;
+            invalidate();
+        }
+
+        void setPrimaryLabelSizeDp(int sizeDp) {
+            primaryLabelSizeDp = sizeDp;
             invalidate();
         }
 
@@ -486,7 +498,7 @@ final class P5Views {
             c.drawPath(poly, paint);
 
             // Bold diagonal corner slash inside primary PLAY button
-            if (primary && !warningStyle) {
+            if (primary && !warningStyle && primarySlashVisible) {
                 accentPoly.reset();
                 accentPoly.moveTo(l + skew + 6 * d, t);
                 accentPoly.lineTo(l + skew + 16 * d, t);
@@ -522,11 +534,13 @@ final class P5Views {
             c.drawPath(poly, paint);
 
             // Label
-            textPaint.setTextSize((primary ? (fixedHeightDp >= 54 ? 21f : 16f) : 13f) * d);
+            float primaryTextSize = primaryLabelSizeDp > 0
+                    ? primaryLabelSizeDp : (fixedHeightDp >= 54 ? 21f : 16f);
+            textPaint.setTextSize((primary ? primaryTextSize : 13f) * d);
             textPaint.setColor(txtColor);
             Paint.FontMetrics fm = textPaint.getFontMetrics();
             float base = (t + b) * 0.5f - (fm.ascent + fm.descent) * 0.5f;
-            float cx = (l + r) * 0.5f + (primary && !warningStyle ? 4 * d : 0f);
+            float cx = (l + r) * 0.5f + (primary && !warningStyle && primarySlashVisible ? 4 * d : 0f);
             c.drawText(text.toUpperCase(java.util.Locale.ROOT), cx, base, textPaint);
         }
     }

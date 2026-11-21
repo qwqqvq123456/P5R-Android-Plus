@@ -2622,6 +2622,8 @@ public class Launcher extends Activity {
         updateNotice.addView(copy, new LinearLayout.LayoutParams(0, dp(40), 1f));
 
         updateNoticeAction = new P5Views.SlashButton(this, t("ACTUALIZAR", "UPDATE"), true, 38);
+        updateNoticeAction.setPrimarySlashVisible(false);
+        updateNoticeAction.setPrimaryLabelSizeDp(13);
         updateNoticeAction.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { startUpdateDownload(); }
         });
