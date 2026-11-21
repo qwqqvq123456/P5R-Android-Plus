@@ -162,6 +162,9 @@ public final class PauseActivity extends Activity {
                 new String[] {"auto", "en-US", "es", "fr", "de", "it", "ja", "ko", "zh-Hans", "zh-Hant"},
                 new String[] {"Automático", "English", "Español", "Français", "Deutsch", "Italiano", "日本語", "한국어", "简体中文", "繁體中文"},
                 new String[] {"Automatic", "English", "Español", "Français", "Deutsch", "Italiano", "日本語", "한국어", "简体中文", "繁體中文"}));
+        choices.add(new Choice(categories[4], "NX_COLOR_PROFILE", "Perfil de color", "Color profile",
+                new String[] {"0", "1", "2"}, new String[] {"Normal", "Vívido", "P5 Pop"},
+                new String[] {"Default", "Vivid", "P5 Pop"}));
         choices.add(new Choice(categories[5], "NX_GAMEPAD_LAYOUT", "Distribución A/B", "A/B layout",
                 new String[] {"0", "1"}, new String[] {"Nintendo · A a la derecha", "Xbox · A abajo"},
                 new String[] {"Nintendo · A on right", "Xbox · A on bottom"}));
@@ -408,7 +411,8 @@ public final class PauseActivity extends Activity {
             }
             applyRuntimeOption(choice.key);
             if ("NX_ULTRAWIDE".equals(choice.key) || "NX_MAX_ANISO".equals(choice.key)
-                    || "NX_HUD_RES".equals(choice.key) || "NX_UW_STRETCH_UI".equals(choice.key))
+                    || "NX_HUD_RES".equals(choice.key) || "NX_UW_STRETCH_UI".equals(choice.key)
+                    || "NX_COLOR_PROFILE".equals(choice.key))
                 Toast.makeText(this, t("Este ajuste se aplica al iniciar el juego.",
                         "This setting takes effect the next time the game starts."), Toast.LENGTH_SHORT).show();
             if ("NX_SHADOWS".equals(choice.key)) {
