@@ -1,56 +1,49 @@
-# The launcher icon from a picture of the mask (white on black): python games/p5r/tools/make_icon.py <picture>
-# Cleans the edges (thresholded at 4x, then smoothed), centres the mask on a black square inside the part of an
-# adaptive icon every launcher mask shows, and writes games/p5r/icon/icon.png (1024 px) and the launcher sizes under
-# games/p5r/icon/res (mipmap-*/ic_launcher.png, the adaptive icon's layer and its xml), which build_apk.ps1 uses.
+# Create the P5RP launcher icon from the supplied full-colour artwork:
+# python games/p5r/tools/make_icon.py <picture>
+# Writes games/p5r/icon/icon.png (1024 px) and Android density/adaptive resources.
 import os
 import sys
 
-from PIL import Image, ImageFilter
+from PIL import Image, ImageOps
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "..", "icon")
 
 
-def mask_of(path):
-    grey = Image.open(path).convert("L")
-    big = grey.resize((grey.width * 4, grey.height * 4), Image.LANCZOS)
-    hard = big.point(lambda v: 255 if v > 128 else 0)
-    soft = hard.filter(ImageFilter.GaussianBlur(2.5))  # antialiased edges after the threshold
-    box = soft.point(lambda v: 255 if v > 8 else 0).getbbox()  # the mask itself, without the black around it
-    return soft.crop(box)
-
-
-def square(mask, size, width_share):
-    # The mask's width as a share of the square, centred (a little above the middle: the mask's chin is pointed).
-    w = round(size * width_share)
-    h = round(mask.height * w / mask.width)
-    canvas = Image.new("L", (size, size), 0)
-    canvas.paste(mask.resize((w, h), Image.LANCZOS), ((size - w) // 2, (size - h) // 2 - size // 40))
-    return Image.merge("RGB", (canvas, canvas, canvas))
+def fit_artwork(artwork, size, width_share=1.0):
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    width = max(1, round(size * width_share))
+    height = max(1, round(size * width_share))
+    image = ImageOps.fit(artwork, (width, height), method=Image.Resampling.LANCZOS,
+                         centering=(0.5, 0.5))
+    canvas.alpha_composite(image, ((size - width) // 2, (size - height) // 2))
+    return canvas
 
 
 def main():
-    mask = mask_of(sys.argv[1])
+    artwork = Image.open(sys.argv[1]).convert("RGBA")
     os.makedirs(OUT, exist_ok=True)
-    square(mask, 1024, 0.78).save(os.path.join(OUT, "icon.png"))
+    icon = fit_artwork(artwork, 1024)
+    icon.save(os.path.join(OUT, "icon.png"))
+
     res = os.path.join(OUT, "res")
-    # Legacy square icons (the mask wide), and the adaptive layer (108 dp): every mask shows the middle 72 dp and a
-    # round one less, so the mask spans 56% of the layer there.
     for folder, px in (("mdpi", 48), ("hdpi", 72), ("xhdpi", 96), ("xxhdpi", 144), ("xxxhdpi", 192)):
-        d = os.path.join(res, "mipmap-" + folder)
-        os.makedirs(d, exist_ok=True)
-        square(mask, px * 4, 0.78).resize((px, px), Image.LANCZOS).save(os.path.join(d, "ic_launcher.png"))
-        layer = round(px * 108 / 48)
-        square(mask, layer * 4, 0.56).resize((layer, layer), Image.LANCZOS).save(os.path.join(d, "ic_launcher_layer.png"))
-    d = os.path.join(res, "mipmap-anydpi-v26")
-    os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, "ic_launcher.xml"), "w", encoding="utf-8") as x:
-        x.write('<?xml version="1.0" encoding="utf-8"?>\n'
-                '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n'
-                '    <background android:drawable="@mipmap/ic_launcher_layer" />\n'
-                '    <foreground android:drawable="@android:color/transparent" />\n'
-                '</adaptive-icon>\n')
-    print("icon: %s, launcher sizes in %s" % (os.path.join(OUT, "icon.png"), res))
+        directory = os.path.join(res, "mipmap-" + folder)
+        os.makedirs(directory, exist_ok=True)
+        fit_artwork(artwork, px).save(os.path.join(directory, "ic_launcher.png"))
+        adaptive_size = round(px * 108 / 48)
+        fit_artwork(artwork, adaptive_size, 0.88).save(
+            os.path.join(directory, "ic_launcher_layer.png"))
+
+    directory = os.path.join(res, "mipmap-anydpi-v26")
+    os.makedirs(directory, exist_ok=True)
+    with open(os.path.join(directory, "ic_launcher.xml"), "w", encoding="utf-8") as icon_xml:
+        icon_xml.write('<?xml version="1.0" encoding="utf-8"?>\n'
+                       '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n'
+                       '    <background android:drawable="@android:color/black" />\n'
+                       '    <foreground android:drawable="@mipmap/ic_launcher_layer" />\n'
+                       '</adaptive-icon>\n')
+    print("P5RP icon: %s, launcher resources: %s" % (os.path.join(OUT, "icon.png"), res))
 
 
 if __name__ == "__main__":

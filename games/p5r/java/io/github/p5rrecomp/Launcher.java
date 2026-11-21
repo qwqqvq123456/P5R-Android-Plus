@@ -1,9 +1,12 @@
 package io.github.p5rrecomp;
 
 import android.app.Activity;
+import android.app.DownloadManager;
+import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ShortcutInfo;
 import android.content.pm.ShortcutManager;
@@ -45,12 +48,17 @@ import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 /**
  * Persona 5 Royal Android Launcher — Reworked Landscape Command Deck (Direction A: P5 Pause / Calling Card).
@@ -67,7 +75,11 @@ public class Launcher extends Activity {
     static final int TAB_PERFORMANCE = 2;
     static final int TAB_CONTROLS = 3;
     static final int TAB_FILES = 4;
-    static final int TAB_COUNT = 5;
+    static final int TAB_CREDITS = 5;
+    static final int TAB_COUNT = 6;
+    private static final int UPDATE_PERMISSION_REQUEST = 10;
+    private static final String RELEASES_API =
+            "https://api.github.com/repos/synndras/P5R-Android-Plus/releases?per_page=100";
 
     static final int PICK_ZIP = 1, PICK_FOLDER = 2, PICK_GAME = 3, PICK_KEYS = 4,
             PICK_ICON = 5, PREPARE = 6, PICK_CPK = 7, PICK_DRIVER = 8, PICK_WALLPAPER = 9;
@@ -146,6 +158,15 @@ public class Launcher extends Activity {
     private TextView heroStatusTitle;
     private TextView heroStatusBody;
     private P5Views.AngledRowLayout heroStatusCard;
+    private P5Views.AngledRowLayout updateNotice;
+    private TextView updateNoticeTitle;
+    private TextView updateNoticeBody;
+    private P5Views.SlashButton updateNoticeAction;
+    private String updateApkUrl;
+    private String updateVersion;
+    private long updateDownloadId = -1;
+    private BroadcastReceiver updateDownloadReceiver;
+    private boolean waitingForUpdatePermission;
 
     // Live spec badges on Home screen
     private P5Views.SpecBadge specRes;
@@ -360,7 +381,7 @@ public class Launcher extends Activity {
             }
             Intent launch = new Intent(this, Launcher.class).setAction(Intent.ACTION_MAIN);
             ShortcutInfo info = new ShortcutInfo.Builder(this, "picture_" + System.currentTimeMillis())
-                    .setShortLabel("P5R").setLongLabel("Persona 5 Royal").setIcon(Icon.createWithAdaptiveBitmap(icon))
+                    .setShortLabel("P5RP").setLongLabel("P5RP").setIcon(Icon.createWithAdaptiveBitmap(icon))
                     .setIntent(launch).build();
             sm.requestPinShortcut(info, null);
             tell(t("Icono", "Icon"), t("Acepta el aviso para poner el acceso directo con tu imagen en la pantalla de inicio.",
@@ -586,6 +607,8 @@ public class Launcher extends Activity {
                 public void run() { startPendingIntro(); }
             });
         }
+        registerUpdateDownloadReceiver();
+        checkForUpdatesOnLaunch();
     }
 
     private void startPendingIntro() {
@@ -631,6 +654,12 @@ public class Launcher extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (waitingForUpdatePermission) {
+            waitingForUpdatePermission = false;
+            if (canRequestPackageInstalls()) beginUpdateDownload();
+            else Toast.makeText(this, t("Permiso de instalación no concedido", "Install permission was not granted"),
+                    Toast.LENGTH_LONG).show();
+        }
         launchingGame = false;
         if (launchOverlay != null && rootFrame != null) {
             rootFrame.removeView(launchOverlay);
@@ -646,6 +675,10 @@ public class Launcher extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (updateDownloadReceiver != null) {
+            try { unregisterReceiver(updateDownloadReceiver); } catch (Exception ignored) {}
+            updateDownloadReceiver = null;
+        }
         super.onDestroy();
         P5Feedback.release();
         if (currentWallpaperBmp != null) {
@@ -946,6 +979,7 @@ public class Launcher extends Activity {
         tabPanels[TAB_PERFORMANCE] = buildSettingsPanel(TAB_PERFORMANCE, t("RENDIMIENTO", "PERFORMANCE"), "");
         tabPanels[TAB_CONTROLS] = buildControlsPanel();
         tabPanels[TAB_FILES] = buildFilesPanel();
+        tabPanels[TAB_CREDITS] = buildCreditsPanel();
 
         for (int i = 0; i < TAB_COUNT; i++) {
             tabPanels[i].setVisibility(i == TAB_PLAY ? View.VISIBLE : View.GONE);
@@ -958,6 +992,7 @@ public class Launcher extends Activity {
             root.addView(introOverlay, new FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         }
+        buildUpdateNotice(root);
 
         setContentView(root);
         selectTab(TAB_PLAY, false);
@@ -977,15 +1012,16 @@ public class Launcher extends Activity {
         mhLp.bottomMargin = dp(8);
         rail.addView(masthead, mhLp);
 
-        // 5 Slanted Pause-Menu Tabs
+        // 6 Slanted Pause-Menu Tabs
         final String[] tabNames = {
             t("JUGAR", "PLAY"),
             t("PANTALLA", "DISPLAY"),
             t("RENDIMIENTO", "PERFORMANCE"),
             t("CONTROLES", "CONTROLS"),
-            t("ARCHIVOS", "FILES")
+            t("ARCHIVOS", "FILES"),
+            t("CRÉDITOS", "CREDITS")
         };
-        final String[] tabNums = {"01", "02", "03", "04", "05"};
+        final String[] tabNums = {"01", "02", "03", "04", "05", "06"};
 
         LinearLayout navGroup = new LinearLayout(this);
         navGroup.setOrientation(LinearLayout.VERTICAL);
@@ -1688,6 +1724,59 @@ public class Launcher extends Activity {
         return col;
     }
 
+    private View buildCreditsPanel() {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.addView(new P5Views.SectionHeaderView(this, t("CRÉDITOS", "CREDITS"), ""),
+                new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(44)));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        list.setPadding(0, dp(4), 0, dp(16));
+
+        addActionRow(list,
+                t("Proyecto original", "Original project"),
+                t("Todos los créditos del port original pertenecen a Brandon04Gonzalez.",
+                        "All credit for the original port belongs to Brandon04Gonzalez."),
+                t("VER GITHUB", "OPEN GITHUB"),
+                new View.OnClickListener() {
+                    @Override public void onClick(View v) { openCreditLink("https://github.com/Brandon04Gonzalez/p5r-android"); }
+                }, null, null, false);
+        addActionRow(list,
+                t("Fork de Chakeyy", "Chakeyy's fork"),
+                t("Launcher rework usado como base de esta versión.",
+                        "Launcher rework used as the base for this version."),
+                t("VER GITHUB", "OPEN GITHUB"),
+                new View.OnClickListener() {
+                    @Override public void onClick(View v) { openCreditLink("https://github.com/Chakeyy/p5r-android"); }
+                }, null, null, false);
+        addActionRow(list,
+                t("P5RP · synndras", "P5RP · synndras"),
+                t("Cambios de calidad de vida para uso personal.",
+                        "Personal quality-of-life changes."),
+                t("MI GITHUB", "MY GITHUB"),
+                new View.OnClickListener() {
+                    @Override public void onClick(View v) { openCreditLink("https://github.com/synndras"); }
+                }, null, null, true);
+
+        tabLists[TAB_CREDITS] = list;
+        tabScrolls[TAB_CREDITS] = scroll;
+        scroll.addView(list);
+        col.addView(scroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        return col;
+    }
+
+    private void openCreditLink(String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (Exception e) {
+            Toast.makeText(this, t("No se pudo abrir el enlace", "Could not open link"), Toast.LENGTH_SHORT).show();
+        }
+    }
+
     private void addOptionRow(LinearLayout parent, final Option o) {
         P5Views.AngledRowLayout row = new P5Views.AngledRowLayout(this);
         o.rowView = row;
@@ -1939,6 +2028,9 @@ public class Launcher extends Activity {
         } else {
             pinnedPlay.setVisibility(View.GONE);
         }
+
+        if (updateNotice != null)
+            updateNotice.setVisibility(idx == TAB_PLAY && updateApkUrl != null ? View.VISIBLE : View.GONE);
 
         bgView.setSettingsMode(idx != TAB_PLAY, animate);
 
@@ -2504,13 +2596,235 @@ public class Launcher extends Activity {
         }
     }
 
+    private void buildUpdateNotice(FrameLayout root) {
+        updateNotice = new P5Views.AngledRowLayout(this);
+        updateNotice.setHighlight(true);
+        updateNotice.setOrientation(LinearLayout.HORIZONTAL);
+        updateNotice.setGravity(Gravity.CENTER_VERTICAL);
+        updateNotice.setPadding(dp(14), dp(8), dp(10), dp(8));
+
+        LinearLayout copy = new LinearLayout(this);
+        copy.setOrientation(LinearLayout.VERTICAL);
+        copy.setGravity(Gravity.CENTER_VERTICAL);
+        updateNoticeTitle = new TextView(this);
+        updateNoticeTitle.setTypeface(P5Theme.monoBold());
+        updateNoticeTitle.setTextColor(P5Theme.ACID_YELLOW);
+        updateNoticeTitle.setTextSize(10.5f);
+        updateNoticeTitle.setSingleLine(true);
+        copy.addView(updateNoticeTitle);
+        updateNoticeBody = new TextView(this);
+        updateNoticeBody.setTypeface(P5Theme.bodyRegular());
+        updateNoticeBody.setTextColor(P5Theme.PAPER_WHITE);
+        updateNoticeBody.setTextSize(11.5f);
+        updateNoticeBody.setSingleLine(true);
+        updateNoticeBody.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        copy.addView(updateNoticeBody);
+        updateNotice.addView(copy, new LinearLayout.LayoutParams(0, dp(40), 1f));
+
+        updateNoticeAction = new P5Views.SlashButton(this, t("ACTUALIZAR", "UPDATE"), true, 38);
+        updateNoticeAction.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { startUpdateDownload(); }
+        });
+        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(dp(112), dp(38));
+        actionParams.leftMargin = dp(8);
+        updateNotice.addView(updateNoticeAction, actionParams);
+        updateNotice.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { startUpdateDownload(); }
+        });
+        updateNotice.setVisibility(View.GONE);
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(dp(350), dp(64), Gravity.BOTTOM | Gravity.END);
+        params.rightMargin = dp(24);
+        params.bottomMargin = dp(80);
+        root.addView(updateNotice, params);
+    }
+
+    private void registerUpdateDownloadReceiver() {
+        IntentFilter filter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
+        updateDownloadReceiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                if (intent == null || !DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction())) return;
+                long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L);
+                if (id == updateDownloadId) onUpdateDownloadComplete(id);
+            }
+        };
+        if (Build.VERSION.SDK_INT >= 33)
+            registerReceiver(updateDownloadReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        else registerReceiver(updateDownloadReceiver, filter);
+    }
+
+    private void checkForUpdatesOnLaunch() {
+        Thread check = new Thread(new Runnable() {
+            @Override public void run() {
+                HttpURLConnection connection = null;
+                try {
+                    connection = (HttpURLConnection) new URL(RELEASES_API).openConnection();
+                    connection.setConnectTimeout(8000);
+                    connection.setReadTimeout(8000);
+                    connection.setRequestProperty("Accept", "application/vnd.github+json");
+                    connection.setRequestProperty("User-Agent", "P5RP-Android");
+                    if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) return;
+
+                    StringBuilder response = new StringBuilder();
+                    try (BufferedReader reader = new BufferedReader(
+                            new InputStreamReader(connection.getInputStream(), "UTF-8"))) {
+                        char[] buffer = new char[4096];
+                        int count;
+                        while ((count = reader.read(buffer)) != -1) response.append(buffer, 0, count);
+                    }
+                    String installedVersion = "0";
+                    try {
+                        installedVersion = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+                    } catch (Exception ignored) {}
+
+                    JSONArray releases = new JSONArray(response.toString());
+                    String newestVersion = null;
+                    String newestUrl = null;
+                    for (int i = 0; i < releases.length(); i++) {
+                        JSONObject release = releases.optJSONObject(i);
+                        if (release == null || release.optBoolean("draft", false)) continue;
+                        String tag = release.optString("tag_name", "");
+                        if (compareVersions(tag, installedVersion) <= 0) continue;
+                        JSONArray assets = release.optJSONArray("assets");
+                        if (assets == null) continue;
+                        for (int a = 0; a < assets.length(); a++) {
+                            JSONObject asset = assets.optJSONObject(a);
+                            if (asset == null) continue;
+                            String name = asset.optString("name", "");
+                            if (!"p5r.apk".equalsIgnoreCase(name) && !"p5rp.apk".equalsIgnoreCase(name)) continue;
+                            String url = asset.optString("browser_download_url", "");
+                            if (!url.startsWith("https://github.com/synndras/P5R-Android-Plus/releases/download/")) continue;
+                            if (newestVersion == null || compareVersions(tag, newestVersion) > 0) {
+                                newestVersion = tag;
+                                newestUrl = url;
+                            }
+                        }
+                    }
+                    if (newestVersion == null || newestUrl == null) return;
+                    final String foundVersion = newestVersion.replaceFirst("^[vV]", "");
+                    final String foundUrl = newestUrl;
+                    runOnUiThread(new Runnable() {
+                        @Override public void run() { showUpdateNotice(foundVersion, foundUrl); }
+                    });
+                } catch (Exception ignored) {
+                    // Offline launch is normal; check again the next time the user opens P5RP.
+                } finally {
+                    if (connection != null) connection.disconnect();
+                }
+            }
+        }, "p5rp-release-check");
+        check.setDaemon(true);
+        check.start();
+    }
+
+    private int compareVersions(String first, String second) {
+        String a = first == null ? "" : first.replaceFirst("^[vV]", "");
+        String b = second == null ? "" : second.replaceFirst("^[vV]", "");
+        String[] left = a.split("\\.");
+        String[] right = b.split("\\.");
+        if (left.length == 0 || right.length == 0) return -1;
+        for (int i = 0; i < Math.max(left.length, right.length); i++) {
+            int x, y;
+            try { x = i < left.length ? Integer.parseInt(left[i].replaceAll("[^0-9].*$", "")) : 0; }
+            catch (Exception e) { return -1; }
+            try { y = i < right.length ? Integer.parseInt(right[i].replaceAll("[^0-9].*$", "")) : 0; }
+            catch (Exception e) { return -1; }
+            if (x != y) return x < y ? -1 : 1;
+        }
+        return 0;
+    }
+
+    private void showUpdateNotice(String version, String apkUrl) {
+        if (isFinishing() || updateNotice == null) return;
+        updateVersion = version;
+        updateApkUrl = apkUrl;
+        updateNoticeTitle.setText(t("ACTUALIZACIÓN DISPONIBLE", "UPDATE AVAILABLE"));
+        updateNoticeBody.setText(Lang.f("P5RP v%s · Descargar e instalar", "P5RP v%s · Download and install", version));
+        updateNoticeAction.setText(t("ACTUALIZAR", "UPDATE"));
+        updateNoticeAction.setEnabled(true);
+        updateNotice.setVisibility(activeTab == TAB_PLAY ? View.VISIBLE : View.GONE);
+    }
+
+    private boolean canRequestPackageInstalls() {
+        return Build.VERSION.SDK_INT < 26 || getPackageManager().canRequestPackageInstalls();
+    }
+
+    private void startUpdateDownload() {
+        if (updateApkUrl == null) return;
+        if (!canRequestPackageInstalls()) {
+            try {
+                waitingForUpdatePermission = true;
+                Intent settings = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + getPackageName()));
+                startActivity(settings);
+            } catch (Exception e) {
+                waitingForUpdatePermission = false;
+                Toast.makeText(this, t("No se pudo abrir el permiso de instalación", "Could not open install permission settings"),
+                        Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+        beginUpdateDownload();
+    }
+
+    private void beginUpdateDownload() {
+        DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+        if (manager == null || updateApkUrl == null) return;
+        try {
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(updateApkUrl));
+            request.setTitle("P5RP v" + updateVersion);
+            request.setDescription(t("Descargando actualización", "Downloading update"));
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS,
+                    "p5rp-update-" + updateVersion + "-" + System.currentTimeMillis() + ".apk");
+            updateDownloadId = manager.enqueue(request);
+            updateNoticeTitle.setText(t("DESCARGANDO ACTUALIZACIÓN", "DOWNLOADING UPDATE"));
+            updateNoticeBody.setText(t("Android te pedirá confirmar la instalación.",
+                    "Android will ask you to confirm installation."));
+            updateNoticeAction.setText(t("DESCARGANDO", "DOWNLOADING"));
+            updateNoticeAction.setEnabled(false);
+        } catch (Exception e) {
+            updateNoticeBody.setText(t("No se pudo iniciar la descarga.", "Could not start the download."));
+            updateNoticeAction.setEnabled(true);
+        }
+    }
+
+    private void onUpdateDownloadComplete(long id) {
+        DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+        if (manager == null) return;
+        try (Cursor cursor = manager.query(new DownloadManager.Query().setFilterById(id))) {
+            if (cursor == null || !cursor.moveToFirst()) return;
+            int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+            if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                Uri apkUri = manager.getUriForDownloadedFile(id);
+                if (apkUri == null) throw new IllegalStateException("Downloaded APK URI is missing");
+                Intent install = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+                install.setDataAndType(apkUri, "application/vnd.android.package-archive");
+                install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                install.putExtra(Intent.EXTRA_RETURN_RESULT, true);
+                startActivity(install);
+            } else if (status == DownloadManager.STATUS_FAILED) {
+                updateNoticeTitle.setText(t("DESCARGA FALLIDA", "DOWNLOAD FAILED"));
+                updateNoticeBody.setText(t("Comprueba tu conexión y vuelve a intentarlo.",
+                        "Check your connection and try again."));
+                updateNoticeAction.setText(t("REINTENTAR", "RETRY"));
+                updateNoticeAction.setEnabled(true);
+            }
+        } catch (Exception e) {
+            updateNoticeTitle.setText(t("NO SE PUDO INSTALAR", "INSTALL COULD NOT START"));
+            updateNoticeBody.setText(t("Abre Descargas e intenta instalar P5RP manualmente.",
+                    "Open Downloads and try installing P5RP manually."));
+            updateNoticeAction.setText(t("REINTENTAR", "RETRY"));
+            updateNoticeAction.setEnabled(true);
+        }
+    }
+
     private String buildVersionStamp() {
         try {
             String ver = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
             if (ver != null && !ver.isEmpty()) return "v" + ver;
         } catch (Exception ignored) {
         }
-        return "P5R";
+        return "P5RP";
     }
 
     private String cleanReadySummary() {
