@@ -14,7 +14,8 @@ final class Lang {
     // The columns of the table, after the English key.
     private static final String[] COLUMNS = {"fr", "de", "it", "pt", "ja", "ko", "zh-Hans", "zh-Hant"};
     private static final Map<String, String[]> TABLE = new HashMap<>();
-    private static final String DEVICE = device();
+    /** 界面语言：默认跟随系统，启动器里的“界面语言”可以改（见 Launcher）。 */
+    private static String DEVICE = device();
 
     private Lang() {}
 
@@ -34,9 +35,23 @@ final class Lang {
         return "en";
     }
 
+    /** 改界面语言：null、空串或 "auto" 表示跟随系统。 */
+    static void setDevice(String lang) {
+        DEVICE = lang == null || lang.isEmpty() || lang.equals("auto") ? device() : lang;
+    }
+
+    static String current() {
+        return DEVICE;
+    }
+
     static String t(String spanish, String english) {
         if (DEVICE.equals("es")) return spanish;
         if (DEVICE.equals("en")) return english;
+        // 简体中文先用我们自己维护的完整表（LangZh），没有再退回 Lang 自带的那一列
+        if (DEVICE.equals("zh-Hans")) {
+            String zh = LangZh.t(english);
+            if (zh != null) return zh;
+        }
         String[] row = TABLE.get(english);
         if (row == null) return english;
         for (int k = 0; k < COLUMNS.length; k++)

@@ -1,0 +1,182 @@
+name: 构建 APK 并发布 Release
+
+# 把 games/p5r 的 Android 原生版本打成一个 APK（沿用上游的构建步骤），
+# 构建成功后发布成一个滚动的 Release（标签 cn-latest，资产 p5r-cn.apk），
+# 固定下载地址：https://github.com/<owner>/<repo>/releases/latest/download/p5r-cn.apk
+#
+# 触发方式：
+#   - main 分支有推送（同步上游的机器人推送用 GITHUB_TOKEN，不会触发这里，所以 sync-upstream.yml 会显式调用一次）
+#   - 手动运行（可选是否发布）
+#   - Pull Request（只构建，不发布）
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 构建成功后发布到 Release
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      VULKAN_SDK: ${{ github.workspace }}/private/third_party/Vulkan-Headers-1.4.357
+    steps:
+      - name: 检出代码（含标签，用于取上游版本号）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: 安装 Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platform-tools
+
+      - name: 安装 SDK 组件
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358"
+
+      - name: 准备构建依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake ninja-build zip unzip curl python3
+          mkdir -p private/third_party
+          git clone --depth 1 --branch v1.4.357 \
+            https://github.com/KhronosGroup/Vulkan-Headers private/third_party/Vulkan-Headers-1.4.357
+          mkdir -p private/third_party/ryubing
+          curl -fsSL --retry 5 --retry-delay 5 -o private/third_party/ryubing.tar.gz \
+            https://codeberg.org/Software_arch/Ryubing/archive/a82350bb77.tar.gz
+          tar -xzf private/third_party/ryubing.tar.gz -C private/third_party/ryubing --strip-components=1
+          rm private/third_party/ryubing.tar.gz
+
+      - name: 中文文案覆盖检查
+        run: python3 tools/check_zh.py | tee -a "$GITHUB_STEP_SUMMARY" || true
+
+      - name: 编译着色器转换器
+        run: docker run --rm -v "$PWD:/src" -w /src mcr.microsoft.com/dotnet/sdk:10.0 sh games/p5r/tools/build_harness_android.sh
+
+      # 仓库 Secrets（可选）：P5R_KEYSTORE_BASE64 / P5R_KEYSTORE_PASSWORD / P5R_KEY_ALIAS / P5R_KEY_PASSWORD。
+      # 配置了就一直用同一把签名钥匙，装过的旧版本可以直接覆盖安装；没配置则每次生成新的调试钥匙。
+      - name: 准备签名钥匙
+        env:
+          KEYSTORE_BASE64: ${{ secrets.P5R_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.P5R_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.P5R_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.P5R_KEY_PASSWORD }}
+        run: |
+          mkdir -p "$HOME/.android"
+          if [ -n "${KEYSTORE_BASE64:-}" ]; then
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/p5r.jks"
+            {
+              echo "P5R_KEYSTORE=$HOME/.android/p5r.jks"
+              echo "P5R_KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD:-android}"
+              echo "P5R_KEY_ALIAS=${KEY_ALIAS:-androiddebugkey}"
+              echo "P5R_KEY_PASSWORD=${KEY_PASSWORD:-${KEYSTORE_PASSWORD:-android}}"
+            } >> "$GITHUB_ENV"
+            echo "使用仓库 Secrets 里的签名钥匙"
+          else
+            keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" -storepass android \
+              -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+            echo "::warning::没有配置 P5R_KEYSTORE_BASE64，本次使用临时调试签名，下次构建签名会变，升级需要先卸载"
+          fi
+
+      - name: 写入版本号
+        id: ver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          # 以上游最新 Release 的版本号作基线：上游的标签打在发布分支上，不在 main 的历史里，git describe 取不到。
+          base="$(gh api repos/synndras/P5R-Android-Plus/releases/latest --jq .tag_name 2>/dev/null | sed 's/^v//')"
+          if [ -z "$base" ]; then
+            base="$(git tag --sort=-v:refname 2>/dev/null | head -1 | sed 's/^v//')"
+          fi
+          [ -n "$base" ] || base="0.0.0"
+          name="${base}-cn.${GITHUB_RUN_NUMBER}"
+          code=$((1000 + GITHUB_RUN_NUMBER))
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          f=games/p5r/AndroidManifest.xml
+          sed -i -E "s/android:versionCode=\"[0-9]+\"/android:versionCode=\"$code\"/" "$f"
+          sed -i -E "s/android:versionName=\"[^\"]*\"/android:versionName=\"$name\"/" "$f"
+          grep -n "android:version" "$f" | head -2
+
+      - name: 构建 APK
+        run: bash games/p5r/tools/build_android.sh
+
+      - name: 打包上传
+        uses: actions/upload-artifact@v4
+        with:
+          name: p5r-cn-apk
+          path: private/p5r/apk_nce/p5r.apk
+          if-no-files-found: error
+
+      - name: 发布 Release
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp private/p5r/apk_nce/p5r.apk dist/p5r-cn.apk
+          size="$(du -h dist/p5r-cn.apk | cut -f1)"
+          upstream_head="$(git log -1 --format='%h %s')"
+          {
+            echo "## P5R Android 简体中文版"
+            echo ""
+            echo "| 项目 | 内容 |"
+            echo "| --- | --- |"
+            echo "| 版本 | \`${{ steps.ver.outputs.name }}\` |"
+            echo "| 上游版本 | v${{ steps.ver.outputs.base }} |"
+            echo "| 构建时间 | $(date -u '+%Y-%m-%d %H:%M UTC') |"
+            echo "| 代码提交 | \`${upstream_head}\` |"
+            echo "| APK 大小 | ${size} |"
+            echo ""
+            echo "### 安装"
+            echo ""
+            echo "1. 下载 \`p5r-cn.apk\` 并允许安装未知来源应用；"
+            echo "2. 首次启动授予“所有文件访问权限”；"
+            echo "3. 选择你自己的 \`Persona 5 Royal 1.0.0\` 游戏文件（.nsp / .xci）和 \`prod.keys\`；"
+            echo "4. 点“准备游戏”，等几分钟（只需一次），然后“开始游戏”。"
+            echo ""
+            echo "界面默认跟随系统语言（中文系统即简体中文），与上游 0.5.31 的启动器版本一致。"
+            echo ""
+            echo "### 最近提交"
+            echo ""
+            git log --oneline -8 | sed 's/^/- /'
+            echo ""
+            echo "> 本 APK 不含任何游戏代码或数据，需要你自己拥有游戏的 .nsp / .xci 才能运行。"
+            echo "> 已装过上游原版的话，请先卸载再装这个版本（签名不同）。"
+          } > release-notes.md
+          gh release delete cn-latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create cn-latest dist/p5r-cn.apk \
+            --title "P5R Android 简体中文版 ${{ steps.ver.outputs.name }}" \
+            --notes-file release-notes.md \
+            --latest
+          echo "Release: https://github.com/${{ github.repository }}/releases/latest" >> "$GITHUB_STEP_SUMMARY"

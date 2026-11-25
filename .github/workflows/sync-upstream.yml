@@ -1,0 +1,153 @@
+name: 同步上游更新
+
+# 每天把 synndras/P5R-Android-Plus 的新提交合并进本仓库；有更新时自动触发一次 APK 构建与发布。
+#
+# 跟哪个分支：上游的 Release（例如 0.5.31）是用 Chakeyy-Launcher-Rework 分支打的标签，
+# 那套重做过的启动器还没并回 main，所以默认跟这个分支；一旦它被并进 main，就自动改跟 main。
+# 我们自己的改动只有：简体中文文案（games/p5r/java/.../LangZh.java）、Lang.t() 里的中文入口、
+# 以及 .github/workflows 下的工作流。上游改到这些文件时可能冲突——冲突不会强推，会开一个 issue 提醒手动处理。
+
+on:
+  schedule:
+    - cron: "0 21 * * *"   # 每天 05:00（北京时间）
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: 即使上游没有更新，也触发一次构建并发布
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 检出本仓库
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: 合并上游
+        id: merge
+        env:
+          UPSTREAM: synndras/P5R-Android-Plus
+          RELEASE_BRANCH: Chakeyy-Launcher-Rework
+        run: |
+          set -uo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git remote get-url upstream >/dev/null 2>&1; then
+            git remote add upstream "https://github.com/${UPSTREAM}.git"
+          fi
+          echo "::group::上游最新提交"
+          if ! git fetch --no-tags upstream main "$RELEASE_BRANCH"; then
+            echo "::endgroup::"
+            echo "拉取上游失败" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "发布分支：$RELEASE_BRANCH"
+          git log --oneline -3 "upstream/$RELEASE_BRANCH"
+          echo "::endgroup::"
+
+          # 发布分支已经并回 main 时跟 main（更新更全），否则跟发布分支（里面是重做的启动器）
+          if git merge-base --is-ancestor "upstream/$RELEASE_BRANCH" upstream/main; then
+            TARGET=main
+          else
+            TARGET="$RELEASE_BRANCH"
+          fi
+          echo "本次跟的分支：$TARGET" | tee -a "$GITHUB_STEP_SUMMARY"
+
+          if git merge-base --is-ancestor "upstream/$TARGET" HEAD; then
+            echo "已是最新，无需同步"
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "::group::合并"
+          if git merge --no-edit --no-ff "upstream/$TARGET"; then
+            echo "::endgroup::"
+            git push origin HEAD:main
+            echo "updated=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### 已同步上游（$TARGET）"
+              git log --oneline -5
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::endgroup::"
+            git diff --name-only --diff-filter=U > /tmp/conflicts.txt 2>/dev/null || true
+            git merge --abort
+            cp /tmp/conflicts.txt "$RUNNER_TEMP/conflicts.txt" 2>/dev/null || true
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### 上游同步冲突"
+              echo ""
+              echo "以下文件冲突，已放弃本次合并（本仓库没有被改动）："
+              echo ""
+              sed 's/^/- `/' /tmp/conflicts.txt | sed 's/$/`/'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 冲突时开 issue
+        if: steps.merge.outputs.conflict == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          title="上游同步冲突，需要手动合并"
+          existing="$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')"
+          body="$(printf '%s\n' \
+            "自动同步 \`${{ github.repository }}\` 与上游 \`synndras/P5R-Android-Plus\` 时发生冲突，本次合并已放弃，仓库没有任何改动。" \
+            "" \
+            "冲突文件：" \
+            "" \
+            '```' \
+            "$(cat "$RUNNER_TEMP/conflicts.txt" 2>/dev/null || echo '（无法获取冲突列表）')" \
+            '```' \
+            "" \
+            "手动处理：" \
+            "" \
+            '```bash' \
+            "git remote add upstream https://github.com/synndras/P5R-Android-Plus.git  # 若还没加过" \
+            "git fetch upstream main Chakeyy-Launcher-Rework" \
+            "git merge upstream/Chakeyy-Launcher-Rework   # 一般跟这个发布分支；已并回 main 时改跟 main" \
+            "git merge upstream/main                      # 只在发布分支并回 main 之后" \
+            '```' \
+            "" \
+            "我们的自定义内容主要在这几处，冲突优先保留本仓库的版本，再把上游的新文案补进 \`games/p5r/java/io/github/p5rrecomp/LangZh.java\`：" \
+            "- \`games/p5r/java/io/github/p5rrecomp/LangZh.java\`（简体中文文案）" \
+            "- \`games/p5r/java/io/github/p5rrecomp/Lang.java\`（简体中文入口）" \
+            "- \`.github/workflows/\`（构建与同步）" \
+            "" \
+            "合并推送后会自动触发构建与发布。日期：$(date -u '+%Y-%m-%d %H:%M UTC')")"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
+          echo "已记录冲突 issue" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: 检查简体中文覆盖
+        if: steps.merge.outputs.updated == 'true'
+        run: |
+          # 上游可能加了新文案：列出来，方便补翻译（不阻断流程）
+          python3 tools/check_zh.py | tee -a "$GITHUB_STEP_SUMMARY" || true
+
+      - name: 触发构建与发布
+        if: steps.merge.outputs.updated == 'true' || inputs.force_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 本作业里加了一个名为 upstream 的远端，gh 可能认错仓库，显式指定
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh workflow run "build-release.yml" --ref main
+          echo "已触发构建：https://github.com/${{ github.repository }}/actions/workflows/build-release.yml" >> "$GITHUB_STEP_SUMMARY"
