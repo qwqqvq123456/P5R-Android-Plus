@@ -152,15 +152,21 @@ jobs:
           for s in 按键震动 开始游戏 鸣谢; do
             grep -aq "$s" /tmp/classes.dex || { echo "classes.dex 里没有中文文案：$s"; exit 1; }
           done
-          # 震动权限：装在手机上的 APK 里没有这一条，vibrate() 会被系统拒绝（真机表现：完全不震）
+          # 震动权限：装在手机上的 APK 里没有这一条，vibrate() 会被系统拒绝（真机表现：完全不震）。
+          # 二进制清单把字符串存成 UTF-16LE，strings 必须带 -el；aapt2 不在 PATH 时靠这个兜底。
+          perms=""
           if command -v aapt2 >/dev/null 2>&1; then
-            perms="$(aapt2 dump permissions "$apk")"
-          else
-            unzip -p "$apk" AndroidManifest.xml > /tmp/manifest.bin
-            perms="$(strings -a /tmp/manifest.bin)"
+            perms="$(aapt2 dump permissions "$apk" 2>/dev/null || true)"
           fi
-          echo "$perms" | grep -q "android.permission.VIBRATE" \
-            || { echo "APK 没有 VIBRATE 权限，震动会被系统拒绝"; exit 1; }
+          if ! echo "$perms" | grep -q "android.permission.VIBRATE"; then
+            unzip -p "$apk" AndroidManifest.xml > /tmp/manifest.bin
+            perms="$perms $(strings -a -el /tmp/manifest.bin)"
+          fi
+          if ! echo "$perms" | grep -q "android.permission.VIBRATE"; then
+            echo "APK 没有 VIBRATE 权限，震动会被系统拒绝。清单里的权限："
+            strings -a -el /tmp/manifest.bin | grep -i "permission" || true
+            exit 1
+          fi
           {
             echo "### APK 校验"
             echo ""
