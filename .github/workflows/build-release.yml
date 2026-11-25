@@ -198,9 +198,18 @@ jobs:
             echo "> 本 APK 不含任何游戏代码或数据，需要你自己拥有游戏的 .nsp / .xci 才能运行。"
             echo "> 已装过上游原版的话，请先卸载再装这个版本（签名不同）。"
           } > release-notes.md
-          gh release delete cn-latest --yes --cleanup-tag 2>/dev/null || true
-          gh release create cn-latest dist/p5r-cn.apk \
-            --title "P5R Android 简体中文版 ${{ steps.ver.outputs.name }}" \
-            --notes-file release-notes.md \
-            --latest
+          # GitHub 偶尔会返回 5xx（换版时删除 + 创建两个调用），失败就退避重试，避免白跑一次构建
+          for i in 1 2 3 4 5; do
+            gh release delete cn-latest --yes --cleanup-tag >/dev/null 2>&1 || true
+            if gh release create cn-latest dist/p5r-cn.apk \
+                 --title "P5R Android 简体中文版 ${{ steps.ver.outputs.name }}" \
+                 --notes-file release-notes.md \
+                 --latest; then
+              published=1
+              break
+            fi
+            echo "发布失败，第 $i 次重试…"
+            sleep $((i * 10))
+          done
+          [ "${published:-0}" = 1 ] || { echo "发布 Release 失败"; exit 1; }
           echo "Release: https://github.com/${{ github.repository }}/releases/latest" >> "$GITHUB_STEP_SUMMARY"
