@@ -8,6 +8,9 @@ name: 同步上游更新
 # 说明文档（README.md 中文版）、以及 .github/workflows 下的工作流。上游改到这些文件时可能冲突——
 # 冲突不会强推，会开一个 issue 提醒手动处理；只有说明文档冲突时例外：保留本仓库的中文版，
 # 英文版 README.en.md 从上游 README 重新生成，同步照常继续。
+#
+# 同时把上游每个 Release 的更新日志抓进 docs/upstream-release-notes.md（tools/upstream_notes.py），
+# 发布时贴在 Release 说明里；上游只改了发布说明、代码没动时，也会单独提交一次。
 
 on:
   schedule:
@@ -68,8 +71,20 @@ jobs:
           fi
           echo "本次跟的分支：$TARGET" | tee -a "$GITHUB_STEP_SUMMARY"
 
+          # 上游 Release 的更新日志：写进 docs/upstream-release-notes.md，内容没变就不动文件
+          sync_notes() {
+            python3 tools/upstream_notes.py --out docs/upstream-release-notes.md || return 1
+            [ -n "$(git status --porcelain -- docs/upstream-release-notes.md)" ] || return 1
+            git add docs/upstream-release-notes.md
+          }
+
           if git merge-base --is-ancestor "upstream/$TARGET" HEAD; then
             echo "已是最新，无需同步"
+            if sync_notes; then
+              git commit -m "docs: 同步上游更新日志"
+              git push origin HEAD:main
+              echo "上游代码没有变化，只更新了更新日志" | tee -a "$GITHUB_STEP_SUMMARY"
+            fi
             echo "updated=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -132,6 +147,11 @@ jobs:
           # 清单里的 VIBRATE 权限：上游可能整体重写清单把它带走，补回来再提交（已经有了就不动）
           python3 tools/ensure_manifest.py
           git add games/p5r/AndroidManifest.xml
+
+          # 上游更新日志随本次合并一起提交（抓取失败不影响同步）
+          if sync_notes; then
+            echo "已更新上游更新日志"
+          fi
 
           # 英文版说明跟随上游 README，并自动加上中英文切换链接
           if git cat-file -e "upstream/$TARGET:README.md" 2>/dev/null; then

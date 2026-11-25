@@ -221,6 +221,16 @@ jobs:
             echo ""
             echo "界面默认跟随系统语言（中文系统即简体中文），与上游 0.5.31 的启动器版本一致。"
             echo ""
+            echo "## 上游 v${{ steps.ver.outputs.base }} 更新日志"
+            echo ""
+            if upstream_notes="$(python3 tools/upstream_notes.py --latest docs/upstream-release-notes.md 2>/dev/null)"; then
+              echo "$upstream_notes"
+              echo ""
+              echo "> 上游发布说明原文（西班牙语），完整历史见 [docs/upstream-release-notes.md](https://github.com/${{ github.repository }}/blob/main/docs/upstream-release-notes.md)。"
+            else
+              echo "这次没有取到上游更新日志，见 [上游 Releases](https://github.com/synndras/P5R-Android-Plus/releases)。"
+            fi
+            echo ""
             echo "### 最近提交"
             echo ""
             git log --oneline -8 | sed 's/^/- /'
