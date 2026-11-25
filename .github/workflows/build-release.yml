@@ -198,18 +198,25 @@ jobs:
             echo "> 本 APK 不含任何游戏代码或数据，需要你自己拥有游戏的 .nsp / .xci 才能运行。"
             echo "> 已装过上游原版的话，请先卸载再装这个版本（签名不同）。"
           } > release-notes.md
-          # GitHub 偶尔会返回 5xx（换版时删除 + 创建两个调用），失败就退避重试，避免白跑一次构建
+          # 不删旧版再建新版（删了建失败就会出现「没有 Release」的空窗）：有就复用，只替换资产和说明。
+          title="P5R Android 简体中文版 ${{ steps.ver.outputs.name }}"
+          exists="$(gh api "repos/$GH_REPO/releases?per_page=100" --jq '[.[] | select(.tag_name=="cn-latest")] | length')"
+          if [ "${exists:-0}" = "0" ]; then
+            for i in 1 2 3 4 5; do
+              gh release create cn-latest --title "$title" --notes-file release-notes.md --latest && break
+              echo "创建 Release 失败，第 $i 次重试…"
+              sleep $((i * 10))
+            done
+          fi
+
+          # 资产覆盖上传（可重复执行），GitHub 5xx 时退避重试
           for i in 1 2 3 4 5; do
-            gh release delete cn-latest --yes --cleanup-tag >/dev/null 2>&1 || true
-            if gh release create cn-latest dist/p5r-cn.apk \
-                 --title "P5R Android 简体中文版 ${{ steps.ver.outputs.name }}" \
-                 --notes-file release-notes.md \
-                 --latest; then
-              published=1
-              break
-            fi
-            echo "发布失败，第 $i 次重试…"
+            gh release upload cn-latest dist/p5r-cn.apk --clobber && { uploaded=1; break; }
+            echo "上传 APK 失败，第 $i 次重试…"
             sleep $((i * 10))
           done
-          [ "${published:-0}" = 1 ] || { echo "发布 Release 失败"; exit 1; }
+          [ "${uploaded:-0}" = 1 ] || { echo "上传 APK 失败" >&2; exit 1; }
+
+          # 标题、说明、最新标记、取消草稿（幂等）
+          gh release edit cn-latest --title "$title" --notes-file release-notes.md --latest --draft=false
           echo "Release: https://github.com/${{ github.repository }}/releases/latest" >> "$GITHUB_STEP_SUMMARY"
