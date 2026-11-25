@@ -129,6 +129,30 @@ jobs:
       - name: 构建 APK
         run: bash games/p5r/tools/build_android.sh
 
+      - name: 校验 APK
+        run: |
+          set -euo pipefail
+          apk=private/p5r/apk_nce/p5r.apk
+          listing="$(unzip -Z1 "$apk")"
+          for f in lib/arm64-v8a/libp5r.so lib/arm64-v8a/libp5rimport.so \
+                   lib/arm64-v8a/libspirvharness.so classes.dex AndroidManifest.xml; do
+            echo "$listing" | grep -qx "$f" || { echo "缺少 $f"; exit 1; }
+          done
+          unzip -p "$apk" lib/arm64-v8a/libp5r.so > /tmp/libp5r.so
+          strings -a /tmp/libp5r.so | grep -q "NX_TOUCH_HAPTICS" \
+            || { echo "原生库里没有触摸震动（NX_TOUCH_HAPTICS）"; exit 1; }
+          unzip -p "$apk" classes.dex > /tmp/classes.dex
+          for s in 按键震动 开始游戏 鸣谢; do
+            grep -aq "$s" /tmp/classes.dex || { echo "classes.dex 里没有中文文案：$s"; exit 1; }
+          done
+          {
+            echo "### APK 校验"
+            echo ""
+            echo "- 三个 .so、classes.dex、AndroidManifest.xml 齐全"
+            echo "- libp5r.so 含 NX_TOUCH_HAPTICS（虚拟按键震动已编入）"
+            echo "- classes.dex 含中文文案（按键震动 / 开始游戏 / 鸣谢）"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: 打包上传
         uses: actions/upload-artifact@v4
         with:

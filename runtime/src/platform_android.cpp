@@ -1389,11 +1389,9 @@ bool g_haptic_pending = false;             // a click waits for the thread (unde
 std::atomic<uint64_t> g_haptic_last_ns{0};  // when the last one was taken
 
 int haptics_percent() {
-    static const int pct = [] {
-        const char* e = std::getenv("NX_TOUCH_HAPTICS");
-        return e ? std::clamp(std::atoi(e), 0, 100) : 60;
-    }();
-    return pct;
+    // Read on every tap (not cached): the pause menu changes NX_TOUCH_HAPTICS at runtime and it should apply at once.
+    const char* e = std::getenv("NX_TOUCH_HAPTICS");
+    return e ? std::clamp(std::atoi(e), 0, 100) : 60;
 }
 
 // The device's vibrator, on the haptics thread: effect, attributes and the two vibrate overloads it can use.
