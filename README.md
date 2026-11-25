@@ -32,6 +32,7 @@
 | 按键震动 | `runtime/src/platform_android*.cpp`、`Launcher.java`、`PauseActivity.java` | 按下屏幕虚拟按键时轻微震动；与控制页「按键震动」对应 `NX_TOUCH_HAPTICS=0/35/60/100`（默认 60），与游戏内震动互不影响 |
 | 震动权限 | `games/p5r/AndroidManifest.xml` | 补回上游 `main` 有的 `VIBRATE` 权限。缺它时所有 `vibrate()` 被系统拒绝，表现就是完全不震（任何 Android 版本） |
 | Android 17 兼容 | `runtime/src/platform_android.cpp` | 内存对齐按系统页大小计算；16 KiB 页的设备（Android 15+，Android 17 镜像默认）上 `mprotect` 不再返回 `EINVAL` 导致一启动就闪退 |
+| 自定义 GPU 驱动 | `games/p5r/tools/build_android.sh` | 打包 `libadrenotools` 的 4 个 hook 库。上游的 bash 构建脚本漏了它们（官方 APK 是用 `build_apk.sh` 打的，里面有），结果导入的 Turnip 驱动加载失败、被静默丢弃，只能用系统 Adreno 驱动，大场景就会 GPU 挂死闪退 |
 | 自动同步上游 | `.github/workflows/sync-upstream.yml` | 每天 05:00（北京时间）合并上游发布分支，有更新就提交并触发构建；已并回 `main` 时自动改跟 `main` |
 | 自动构建发布 | `.github/workflows/build-release.yml` | 构建 APK，发布成滚动 Release（标签 `cn-latest`），并写入版本号 |
 | 中文覆盖率检查 | `tools/check_zh.py` | 列出还没翻译的界面文案；同步上游后会跑一次并写进 Actions 摘要 |
@@ -53,6 +54,17 @@
 6. 回到「开始游戏」页，点 **开始游戏**。
 
 装过上游原版的用户注意：签名不同，需要先卸载原版再装这个版本；之后本仓库的每次构建签名一致，可以直接覆盖升级。
+
+### 进游戏闪退（GPU 挂死）怎么办
+
+如果日志 `nx.log` 末尾是 `nvn/vk: GPU hang (vkQueueSubmit): stopping`，说明是 **Vulkan 驱动**报告了 device lost（GPU 挂死），
+不是游戏逻辑崩了。系统自带的 Adreno 驱动（尤其 Adreno 8xx + Android 17）跑这个重编译器的大场景容易挂，换 Turnip 驱动基本能解决。
+
+1. 启动器里选「GPU 驱动」，导入 Turnip 的 `libvulkan_freedreno.so`（`.adpkg` 也行）。
+2. 装好后再看日志：正常会出现 `gpu driver: adrenotools custom driver opened successfully`；
+   如果还是 `adrenotools returned null`，看它后面那句提示——**缺 hook 库**就是 APK 打包不全（本仓库已修，用最新版），
+   **驱动文件被拒**就是换一个 Turnip 版本（要 aarch64 + Vulkan 1.3 的包）。
+3. 仍然偶尔挂死，再按顺序降负载：分辨率从 `native` 改成 1080p → 关「超宽屏 HOR+」→「异步管线」设 OFF → 纹理质量降一档。
 
 ## 自动更新是怎么运作的
 

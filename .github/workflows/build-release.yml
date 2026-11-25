@@ -145,6 +145,12 @@ jobs:
                    lib/arm64-v8a/libspirvharness.so classes.dex AndroidManifest.xml; do
             echo "$listing" | grep -qx "$f" || { echo "缺少 $f"; exit 1; }
           done
+          # libadrenotools 的 hook 库：用户导入自定义 GPU 驱动（Turnip）时按名字从 nativeLibraryDir 加载。
+          # 少了它们 adrenotools 返回 null，自定义驱动被静默丢弃，只能跑系统 Adreno 驱动——大场景会 GPU 挂死闪退。
+          for h in libhook_impl.so libmain_hook.so libfile_redirect_hook.so libgsl_alloc_hook.so; do
+            echo "$listing" | grep -qx "lib/arm64-v8a/$h" \
+              || { echo "缺少 lib/arm64-v8a/$h（自定义 GPU 驱动会无法加载）"; exit 1; }
+          done
           unzip -p "$apk" lib/arm64-v8a/libp5r.so > /tmp/libp5r.so
           strings -a /tmp/libp5r.so | grep -q "NX_TOUCH_HAPTICS" \
             || { echo "原生库里没有触摸震动（NX_TOUCH_HAPTICS）"; exit 1; }
@@ -171,6 +177,7 @@ jobs:
             echo "### APK 校验"
             echo ""
             echo "- 三个 .so、classes.dex、AndroidManifest.xml 齐全"
+            echo "- libadrenotools hook 库齐全（自定义 GPU 驱动可用）"
             echo "- libp5r.so 含 NX_TOUCH_HAPTICS（虚拟按键震动已编入）"
             echo "- APK 已声明 VIBRATE 权限（真机才会震）"
             echo "- classes.dex 含中文文案（按键震动 / 开始游戏 / 鸣谢）"

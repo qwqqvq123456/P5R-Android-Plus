@@ -75,7 +75,9 @@ if [ "$configure" = 1 ]; then
         -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29 -DANDROID_STL=c++_static \
         -DNX_GAME=p5r -DNX_NCE=ON -DNX_DIAGNOSTICS=$diag
 fi
-cmake --build "$build" --target p5r p5rimport
+# hook_impl / main_hook / ... are libadrenotools' shims, loaded by name from the APK's nativeLibraryDir when the user
+# picks a custom Vulkan driver (Turnip, Mesa). They are not part of the normal build, so ask for them explicitly.
+cmake --build "$build" --target p5r p5rimport hook_impl main_hook file_redirect_hook gsl_alloc_hook
 
 host="$(uname -s | tr '[:upper:]' '[:lower:]')-x86_64"
 llvm="$ndk/toolchains/llvm/prebuilt/$host/bin"
@@ -86,6 +88,14 @@ mkdir -p "$out/lib/arm64-v8a" "$out/res"
 "$llvm/llvm-strip" --strip-unneeded -o "$out/lib/arm64-v8a/libp5r.so" "$build/libp5r.so"
 "$llvm/llvm-strip" --strip-unneeded -o "$out/lib/arm64-v8a/libp5rimport.so" "$build/libp5rimport.so"
 "$llvm/llvm-strip" --strip-unneeded -o "$out/lib/arm64-v8a/libspirvharness.so" "$harness"
+# libadrenotools' hook libraries. Without them adrenotools_open_libvulkan returns null and a driver the user imported
+# (Turnip) silently falls back to the system driver -- the stock Adreno driver hangs (VK_ERROR_DEVICE_LOST) in the
+# recompiler's big scenes, which the user sees as the game closing. Upstream's released APK ships all four.
+for h in hook_impl main_hook file_redirect_hook gsl_alloc_hook; do
+    src="$build/adrenotools/src/hook/lib$h.so"
+    [ -f "$src" ] || { echo "missing $src (libadrenotools hooks are needed for custom GPU drivers)" >&2; exit 1; }
+    "$llvm/llvm-strip" --strip-unneeded -o "$out/lib/arm64-v8a/lib$h.so" "$src"
+done
 
 "$bt/aapt2" compile --dir "$root/android/res" -o "$out/res.zip"
 res_zips=("$out/res.zip")

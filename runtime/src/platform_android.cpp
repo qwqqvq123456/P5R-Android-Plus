@@ -713,7 +713,17 @@ void* open_custom_vulkan() {
                 h = nullptr;
             }
         } else {
-            nx::log("gpu driver: adrenotools returned null");
+            // adrenotools loads libhook_impl.so and the three *_hook.so by name from the app's nativeLibraryDir. Without
+            // them it cannot build the namespace the driver runs in, returns null, and the imported driver is silently
+            // dropped -- the stock Adreno driver then runs the game (and hangs in the big scenes on Adreno 8xx).
+            std::string hook = libdir + "libhook_impl.so";
+            if (access(hook.c_str(), R_OK) != 0)
+                nx::log("gpu driver: adrenotools returned null: %s is missing, so no custom driver can load "
+                        "(the APK was packaged without libadrenotools' hook libraries)",
+                        hook.c_str());
+            else
+                nx::log("gpu driver: adrenotools returned null (the hooks are there, the driver file itself was "
+                        "rejected)");
         }
     }
 
