@@ -601,6 +601,15 @@ float default_render_scale() {
 // or if the driver fails to open, the system libvulkan.so is used.
 static void* g_custom_gipa = nullptr;
 
+// active.txt is only the driver that was *picked*. Write down what actually happened, so the launcher (and a log export)
+// can say "failed to load, using the system driver" instead of showing the picked name while the system driver -- and
+// its GPU hangs -- is what actually runs the game.
+static void write_driver_status(const std::string& dir, const std::string& text) {
+    if (dir.empty()) return;
+    std::ofstream f(dir + "status.txt", std::ios::trunc);
+    if (f) f << text << "\n";
+}
+
 void* open_custom_vulkan() {
     if (const char* e = getenv("NX_SYSTEM_DRIVER"); e && e[0] == '1') {
         nx::log("gpu driver: NX_SYSTEM_DRIVER=1 set, using system driver");
@@ -681,6 +690,7 @@ void* open_custom_vulkan() {
             if (gipa) {
                 nx::log("gpu driver: direct Mali ICD opened successfully, gipa=%p", gipa);
                 g_custom_gipa = gipa;
+                write_driver_status(dir, "loaded " + name);
                 return h;
             } else {
                 nx::log("gpu driver: direct dlopen succeeded but neither vk_icdGetInstanceProcAddr nor vkGetInstanceProcAddr found");
@@ -706,6 +716,7 @@ void* open_custom_vulkan() {
             if (gipa) {
                 nx::log("gpu driver: adrenotools custom driver opened successfully, gipa=%p", gipa);
                 g_custom_gipa = gipa;
+                write_driver_status(dir, "loaded " + name);
                 return h;
             } else {
                 nx::log("gpu driver: adrenotools opened library but no GIPA found");
@@ -737,6 +748,7 @@ void* open_custom_vulkan() {
             if (gipa) {
                 nx::log("gpu driver: generic direct dlopen succeeded, gipa=%p", gipa);
                 g_custom_gipa = gipa;
+                write_driver_status(dir, "loaded " + name);
                 return h;
             } else {
                 nx::log("gpu driver: generic direct dlopen has no GIPA symbol");
@@ -749,6 +761,7 @@ void* open_custom_vulkan() {
     }
 
     nx::log("gpu driver: %s", h ? "custom driver opened" : "failed, the system driver is used");
+    if (!h) write_driver_status(dir, "failed");
     return h;
 }
 #endif

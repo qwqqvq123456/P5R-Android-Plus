@@ -3129,10 +3129,28 @@ public class Launcher extends Activity {
         }
     }
 
+    // What the native side did with that driver ("loaded <file>" / "failed"), written on every start: active.txt alone
+    // says only what was picked, and a driver that fails to open silently falls back to the system one.
+    String driverStatus() {
+        try (BufferedReader r = new BufferedReader(new FileReader(new File(driverDir(), "status.txt")))) {
+            String line = r.readLine();
+            return line == null ? "" : line.trim();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     void showDriver() {
         if (driverSub == null) return;
         String a = activeDriver();
-        driverSub.setText(a.isEmpty() ? t("Driver del sistema", "System driver") : a);
+        if (a.isEmpty()) {
+            driverSub.setText(t("Driver del sistema", "System driver"));
+            return;
+        }
+        if (driverStatus().startsWith("failed"))
+            a += " — " + t("no se pudo cargar, se usa el driver del sistema",
+                    "failed to load, the system driver is used");
+        driverSub.setText(a);
     }
 
     void removeDriver() {
@@ -3280,7 +3298,9 @@ public class Launcher extends Activity {
                 }
             } catch (Exception ignored) {}
             String drv = activeDriver();
-            sb.append("GPU Driver: ").append(drv.isEmpty() ? "System driver" : drv).append("\n");
+            String drvStatus = driverStatus();
+            sb.append("GPU Driver: ").append(drv.isEmpty() ? "System driver" : drv)
+                    .append(" (").append(drvStatus.isEmpty() ? "not opened yet" : drvStatus).append(")").append("\n");
             sb.append("Date: ").append(new java.util.Date().toString()).append("\n");
 
             sb.append("\n=== Active Settings ===\n");

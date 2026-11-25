@@ -89,6 +89,7 @@ final class LangZh {
         put("IMPORT CPK", "导入 CPK");
         put("Custom GPU Driver", "自定义 GPU 驱动");
         put("System driver", "系统驱动");
+        put("failed to load, the system driver is used", "加载失败，正在用系统驱动");
         put("REMOVE", "移除");
         put("Launcher Wallpaper", "启动器壁纸");
         put("Default Wallpaper Motion", "默认壁纸动效");
