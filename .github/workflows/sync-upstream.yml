@@ -5,7 +5,9 @@ name: 同步上游更新
 # 跟哪个分支：上游的 Release（例如 0.5.31）是用 Chakeyy-Launcher-Rework 分支打的标签，
 # 那套重做过的启动器还没并回 main，所以默认跟这个分支；一旦它被并进 main，就自动改跟 main。
 # 我们自己的改动只有：简体中文文案（games/p5r/java/.../LangZh.java）、Lang.t() 里的中文入口、
-# 以及 .github/workflows 下的工作流。上游改到这些文件时可能冲突——冲突不会强推，会开一个 issue 提醒手动处理。
+# 说明文档（README.md 中文版）、以及 .github/workflows 下的工作流。上游改到这些文件时可能冲突——
+# 冲突不会强推，会开一个 issue 提醒手动处理；只有说明文档冲突时例外：保留本仓库的中文版，
+# 英文版 README.en.md 从上游 README 重新生成，同步照常继续。
 
 on:
   schedule:
@@ -73,28 +75,75 @@ jobs:
           fi
 
           echo "::group::合并"
-          if git merge --no-edit --no-ff "upstream/$TARGET"; then
-            echo "::endgroup::"
-            git push origin HEAD:main
-            echo "updated=true" >> "$GITHUB_OUTPUT"
-            {
-              echo "### 已同步上游（$TARGET）"
-              git log --oneline -5
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "::endgroup::"
-            git diff --name-only --diff-filter=U > /tmp/conflicts.txt 2>/dev/null || true
-            git merge --abort
-            cp /tmp/conflicts.txt "$RUNNER_TEMP/conflicts.txt" 2>/dev/null || true
-            echo "conflict=true" >> "$GITHUB_OUTPUT"
-            {
-              echo "### 上游同步冲突"
-              echo ""
-              echo "以下文件冲突，已放弃本次合并（本仓库没有被改动）："
-              echo ""
-              sed 's/^/- `/' /tmp/conflicts.txt | sed 's/$/`/'
-            } >> "$GITHUB_STEP_SUMMARY"
+          # 说明文档由本仓库维护（README.md 是中文版，README.en.md 从上游英文版生成），
+          # 所以先把当前版本存起来：不管 git 合并结果如何，最后都用这一份，避免上游的英文覆盖中文。
+          git show HEAD:README.md > /tmp/readme_zh.md 2>/dev/null || : > /tmp/readme_zh.md
+          git show HEAD:README.zh-CN.md > /tmp/readme_zh_old.md 2>/dev/null || : > /tmp/readme_zh_old.md
+
+          merge_rc=0
+          git merge --no-ff --no-commit "upstream/$TARGET" || merge_rc=$?
+
+          if [ "$merge_rc" -ne 0 ]; then
+            git diff --name-only --diff-filter=U > /tmp/conflicts.txt
+            if [ ! -s /tmp/conflicts.txt ]; then
+              echo "::endgroup::"
+              echo "合并失败，但没有冲突文件（可能是别的原因），已放弃" | tee -a "$GITHUB_STEP_SUMMARY"
+              git merge --abort || true
+              exit 1
+            fi
+            # 只有说明文档冲突时不算致命：保留本仓库的版本，继续合并
+            grep -v -E '^(README\.md|README\.en\.md|README\.zh-CN\.md)$' /tmp/conflicts.txt \
+              > /tmp/real_conflicts.txt || true
+            if [ -s /tmp/real_conflicts.txt ]; then
+              git merge --abort
+              cp /tmp/real_conflicts.txt "$RUNNER_TEMP/conflicts.txt"
+              echo "::endgroup::"
+              echo "conflict=true" >> "$GITHUB_OUTPUT"
+              {
+                echo "### 上游同步冲突"
+                echo ""
+                echo "以下文件冲突，已放弃本次合并（本仓库没有被改动）："
+                echo ""
+                sed 's/^/- `/' /tmp/real_conflicts.txt | sed 's/$/`/'
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "说明文档有冲突，保留本仓库版本后继续"
+            git checkout HEAD -- README.md 2>/dev/null || true
+            git checkout HEAD -- README.zh-CN.md 2>/dev/null || true
+            git checkout --ours -- README.en.md 2>/dev/null || true
+            git add README.md README.en.md README.zh-CN.md 2>/dev/null || true
           fi
+
+          # README.md / README.zh-CN.md 一律还原为本仓库版本（即使自动合并干净）
+          cp /tmp/readme_zh.md README.md
+          git add README.md
+          if [ -s /tmp/readme_zh_old.md ]; then
+            cp /tmp/readme_zh_old.md README.zh-CN.md
+            git add README.zh-CN.md
+          fi
+
+          # 英文版说明跟随上游 README，并自动加上中英文切换链接
+          if git cat-file -e "upstream/$TARGET:README.md" 2>/dev/null; then
+            python3 tools/sync_readme.py --upstream-ref "upstream/$TARGET"
+            git add README.en.md
+          fi
+
+          if [ -f .git/MERGE_MSG ]; then
+            git commit --allow-empty -F .git/MERGE_MSG
+          else
+            git commit --allow-empty -m "sync: 合并上游 ${TARGET}"
+          fi
+          echo "::endgroup::"
+          if ! git push origin HEAD:main; then
+            echo "推送 main 失败，本次同步没有生效" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "updated=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "### 已同步上游（$TARGET）"
+            git log --oneline -5
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 冲突时开 issue
         if: steps.merge.outputs.conflict == 'true'
@@ -125,6 +174,7 @@ jobs:
             "我们的自定义内容主要在这几处，冲突优先保留本仓库的版本，再把上游的新文案补进 \`games/p5r/java/io/github/p5rrecomp/LangZh.java\`：" \
             "- \`games/p5r/java/io/github/p5rrecomp/LangZh.java\`（简体中文文案）" \
             "- \`games/p5r/java/io/github/p5rrecomp/Lang.java\`（简体中文入口）" \
+            "- \`README.md\` / \`README.zh-CN.md\`（说明文档中文版；英文版 \`README.en.md\` 由 \`tools/sync_readme.py\` 从上游生成）" \
             "- \`.github/workflows/\`（构建与同步）" \
             "" \
             "合并推送后会自动触发构建与发布。日期：$(date -u '+%Y-%m-%d %H:%M UTC')")"
