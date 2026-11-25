@@ -36,6 +36,11 @@
 
 界面语言跟随系统：中文系统直接显示简体中文，不需要任何设置。
 
+> 关于震动：`Chakeyy-Launcher-Rework` 分支的 `AndroidManifest.xml` 少了上游 `main` 里的 `VIBRATE` 权限，
+> 而 `Vibrator.vibrate()` 没有这条权限会被系统直接拒绝（表现就是完全不震，任何 Android 版本都一样，
+> 不只是 Android 17）。本仓库已补上，并由 `tools/ensure_manifest.py` 在同步和构建前检查，构建出的 APK
+> 还会校验这条权限，避免再被上游覆盖掉。
+
 ## 下载与安装
 
 1. 打开 [Releases](https://github.com/qwqqvq123456/P5R-Android-Plus/releases/latest)，下载 `p5r-cn.apk`（或直接用上面的固定链接）。

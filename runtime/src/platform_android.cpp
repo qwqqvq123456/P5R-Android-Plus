@@ -1493,6 +1493,23 @@ struct Haptic {
         if (!effect_class) return false;
         one_shot = env->GetStaticMethodID(effect_class, "createOneShot", "(JI)Landroid/os/VibrationEffect;");
         if (failed()) one_shot = nullptr;
+        // VIBRATE is granted at install time from the manifest alone (Android never asks the player). If it is missing,
+        // every vibrate() call throws SecurityException and the phone stays still: log it, so a "no vibration" report
+        // can be told apart from "the effect is too weak".
+        bool permitted = true;
+        jclass act_cls = env->GetObjectClass(act);
+        jmethodID check_self = act_cls ? env->GetMethodID(act_cls, "checkSelfPermission", "(Ljava/lang/String;)I")
+                                       : nullptr;
+        if (failed()) check_self = nullptr;
+        if (check_self) {
+            jstring perm = env->NewStringUTF("android.permission.VIBRATE");
+            permitted = env->CallIntMethod(act, check_self, perm) == 0;  // PackageManager.PERMISSION_GRANTED
+            env->DeleteLocalRef(perm);
+            failed();
+        }
+        if (act_cls) env->DeleteLocalRef(act_cls);
+        if (!permitted)
+            nx::log("touch haptics: VIBRATE permission is missing from the manifest: vibrations will be ignored");
         nx::log("touch haptics: %s, strength %d%%",
                 vibrate_attrs ? "the device's vibrator (touch feedback)"
                               : vibrate_audio ? "the device's vibrator (touch feedback, AudioAttributes)"
@@ -1504,15 +1521,46 @@ struct Haptic {
     void tap(int percent) {  // one click, blockingly (~1 ms of JNI)
         const int amp = amplitude ? std::clamp(int(std::lround(float(percent) * 2.55f)), 1, 255) : -1;
         jobject effect = env->CallStaticObjectMethod(effect_class, one_shot, jlong(kHapticMs), jint(amp));
-        if (failed() || !effect) return;
+        if (env->ExceptionCheck() || !effect) {
+            note_failure("createOneShot");
+            if (effect) env->DeleteLocalRef(effect);
+            return;
+        }
         if (vibrate_attrs)
             env->CallVoidMethod(vibrator, vibrate_attrs, effect, attrs);
         else if (vibrate_audio)
             env->CallVoidMethod(vibrator, vibrate_audio, effect, audio);
         else
             env->CallVoidMethod(vibrator, vibrate_plain, effect);
-        failed();
+        note_failure("vibrate");
         env->DeleteLocalRef(effect);
+    }
+
+    // One diagnostic line per run: if vibrate() refuses (no VIBRATE permission, a vendor service that does not take
+    // the call), the reason ends up in the log instead of vanishing.
+    bool logged_failure = false;
+    void note_failure(const char* where) {
+        if (!env->ExceptionCheck()) return;
+        if (logged_failure) {
+            env->ExceptionClear();
+            return;
+        }
+        logged_failure = true;
+        jthrowable t = env->ExceptionOccurred();
+        env->ExceptionClear();
+        jclass tc = env->FindClass("java/lang/Throwable");
+        jmethodID to_string = tc ? env->GetMethodID(tc, "toString", "()Ljava/lang/String;") : nullptr;
+        jstring s = to_string ? static_cast<jstring>(env->CallObjectMethod(t, to_string)) : nullptr;
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            s = nullptr;
+        }
+        const char* msg = s ? env->GetStringUTFChars(s, nullptr) : nullptr;
+        nx::log("touch haptics: %s failed: %s", where, msg ? msg : "?");
+        if (msg) env->ReleaseStringUTFChars(s, msg);
+        if (s) env->DeleteLocalRef(s);
+        if (tc) env->DeleteLocalRef(tc);
+        if (t) env->DeleteLocalRef(t);
     }
 };
 

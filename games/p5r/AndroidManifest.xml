@@ -11,6 +11,10 @@
 
     <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="35" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <!-- The on-screen buttons' click (NX_TOUCH_HAPTICS) and the game's rumble both call Vibrator.vibrate(). Without
+         this permission those calls throw SecurityException and the phone stays still: Android never asks the player,
+         the permission is granted at install time by being declared here. tools/ensure_manifest.py keeps this line. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />

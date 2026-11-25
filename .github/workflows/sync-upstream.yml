@@ -91,9 +91,9 @@ jobs:
               git merge --abort || true
               exit 1
             fi
-            # 只有说明文档冲突时不算致命：保留本仓库的版本，继续合并
-            grep -v -E '^(README\.md|README\.en\.md|README\.zh-CN\.md)$' /tmp/conflicts.txt \
-              > /tmp/real_conflicts.txt || true
+            # 说明文档（保留本仓库版本）和清单文件（取上游版本、再补回权限）的冲突不算致命，继续合并
+            grep -v -E '^(README\.md|README\.en\.md|README\.zh-CN\.md|games/p5r/AndroidManifest\.xml)$' \
+              /tmp/conflicts.txt > /tmp/real_conflicts.txt || true
             if [ -s /tmp/real_conflicts.txt ]; then
               git merge --abort
               cp /tmp/real_conflicts.txt "$RUNNER_TEMP/conflicts.txt"
@@ -108,11 +108,17 @@ jobs:
               } >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
-            echo "说明文档有冲突，保留本仓库版本后继续"
+            echo "说明文档 / 清单文件有冲突，按下面的规则解决后继续"
             git checkout HEAD -- README.md 2>/dev/null || true
             git checkout HEAD -- README.zh-CN.md 2>/dev/null || true
             git checkout --ours -- README.en.md 2>/dev/null || true
             git add README.md README.en.md README.zh-CN.md 2>/dev/null || true
+            # 清单文件取上游的版本（保住上游新增的组件、权限、SDK 设置），VIBRATE 权限由下面的脚本补回来
+            if grep -qx "games/p5r/AndroidManifest.xml" /tmp/conflicts.txt; then
+              git checkout --theirs -- games/p5r/AndroidManifest.xml 2>/dev/null \
+                || git checkout HEAD -- games/p5r/AndroidManifest.xml 2>/dev/null || true
+              git add games/p5r/AndroidManifest.xml 2>/dev/null || true
+            fi
           fi
 
           # README.md / README.zh-CN.md 一律还原为本仓库版本（即使自动合并干净）
@@ -122,6 +128,10 @@ jobs:
             cp /tmp/readme_zh_old.md README.zh-CN.md
             git add README.zh-CN.md
           fi
+
+          # 清单里的 VIBRATE 权限：上游可能整体重写清单把它带走，补回来再提交（已经有了就不动）
+          python3 tools/ensure_manifest.py
+          git add games/p5r/AndroidManifest.xml
 
           # 英文版说明跟随上游 README，并自动加上中英文切换链接
           if git cat-file -e "upstream/$TARGET:README.md" 2>/dev/null; then

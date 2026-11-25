@@ -104,6 +104,13 @@ jobs:
             echo "::warning::没有配置 P5R_KEYSTORE_BASE64，本次使用临时调试签名，下次构建签名会变，升级需要先卸载"
           fi
 
+      - name: 确保震动权限
+        run: |
+          # VIBRATE 是安装时授予的普通权限，写进清单才有；少了它 Vibrator.vibrate() 会静默失败，
+          # 表现就是屏幕按键不震（游戏自身的震动也一样）。
+          python3 tools/ensure_manifest.py
+          grep -n "android.permission.VIBRATE" games/p5r/AndroidManifest.xml
+
       - name: 写入版本号
         id: ver
         env:
@@ -145,11 +152,21 @@ jobs:
           for s in 按键震动 开始游戏 鸣谢; do
             grep -aq "$s" /tmp/classes.dex || { echo "classes.dex 里没有中文文案：$s"; exit 1; }
           done
+          # 震动权限：装在手机上的 APK 里没有这一条，vibrate() 会被系统拒绝（真机表现：完全不震）
+          if command -v aapt2 >/dev/null 2>&1; then
+            perms="$(aapt2 dump permissions "$apk")"
+          else
+            unzip -p "$apk" AndroidManifest.xml > /tmp/manifest.bin
+            perms="$(strings -a /tmp/manifest.bin)"
+          fi
+          echo "$perms" | grep -q "android.permission.VIBRATE" \
+            || { echo "APK 没有 VIBRATE 权限，震动会被系统拒绝"; exit 1; }
           {
             echo "### APK 校验"
             echo ""
             echo "- 三个 .so、classes.dex、AndroidManifest.xml 齐全"
             echo "- libp5r.so 含 NX_TOUCH_HAPTICS（虚拟按键震动已编入）"
+            echo "- APK 已声明 VIBRATE 权限（真机才会震）"
             echo "- classes.dex 含中文文案（按键震动 / 开始游戏 / 鸣谢）"
           } >> "$GITHUB_STEP_SUMMARY"
 
