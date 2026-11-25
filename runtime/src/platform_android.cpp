@@ -91,14 +91,33 @@ bool reserve(uint64_t addr, uint64_t size) {
     return true;
 }
 
+// The host's page size. Not 4 KiB everywhere: devices built with 16 KiB pages (Android 15 and newer, and what Android 17
+// images boot with) reject every mprotect/madvise whose address is only 4 KiB aligned, so guest memory has to be handed
+// to the kernel in their pages, not in the Switch's 4 KiB ones.
+static uint64_t page_size() {
+    static const uint64_t p = [] {
+        long v = sysconf(_SC_PAGESIZE);
+        return v > 0 ? uint64_t(v) : 4096ull;
+    }();
+    return p;
+}
+
 bool commit(uint64_t addr, uint64_t size) {
-    uint64_t a = addr & ~0xFFFull, e = (addr + size + 0xFFF) & ~0xFFFull;
+    const uint64_t page = page_size(), mask = page - 1;
+    uint64_t a = addr & ~mask, e = (addr + size + mask) & ~mask;
     return mprotect(reinterpret_cast<void*>(a), e - a, PROT_READ | PROT_WRITE) == 0;
 }
 
 void decommit(uint64_t addr, uint64_t size) {
-    madvise(reinterpret_cast<void*>(addr), size, MADV_DONTNEED);
-    mprotect(reinterpret_cast<void*>(addr), size, PROT_NONE);
+    // Only the host pages that lie wholly inside the range: the ones on the edges (a guest 4 KiB page can be a quarter
+    // of a 16 KiB host page) are shared with memory that stays mapped, and protecting or clearing them would take that
+    // memory with them. mprotect/madvise with a 4 KiB-aligned address is EINVAL on 16 KiB-page devices, which is why
+    // the range is computed in host pages.
+    const uint64_t page = page_size(), mask = page - 1;
+    uint64_t lo = (addr + mask) & ~mask, hi = (addr + size) & ~mask;
+    if (lo >= hi) return;
+    madvise(reinterpret_cast<void*>(lo), hi - lo, MADV_DONTNEED);
+    mprotect(reinterpret_cast<void*>(lo), hi - lo, PROT_NONE);
 }
 
 // ---- threads and time -----------------------------------------------------------------------------------------

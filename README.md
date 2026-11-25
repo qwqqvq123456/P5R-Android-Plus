@@ -30,6 +30,8 @@
 | 界面简体中文 | `games/p5r/java/io/github/p5rrecomp/LangZh.java` | 启动器全部文案的中文翻译（273 条，含上游多语言表里没有的、新启动器新增的） |
 | 中文入口 | `Lang.java` | 简体中文下先查 `LangZh`，查不到再退回上游自带的多语言表，最后退回英文 |
 | 按键震动 | `runtime/src/platform_android*.cpp`、`Launcher.java`、`PauseActivity.java` | 按下屏幕虚拟按键时轻微震动；与控制页「按键震动」对应 `NX_TOUCH_HAPTICS=0/35/60/100`（默认 60），与游戏内震动互不影响 |
+| 震动权限 | `games/p5r/AndroidManifest.xml` | 补回上游 `main` 有的 `VIBRATE` 权限。缺它时所有 `vibrate()` 被系统拒绝，表现就是完全不震（任何 Android 版本） |
+| Android 17 兼容 | `runtime/src/platform_android.cpp` | 内存对齐按系统页大小计算；16 KiB 页的设备（Android 15+，Android 17 镜像默认）上 `mprotect` 不再返回 `EINVAL` 导致一启动就闪退 |
 | 自动同步上游 | `.github/workflows/sync-upstream.yml` | 每天 05:00（北京时间）合并上游发布分支，有更新就提交并触发构建；已并回 `main` 时自动改跟 `main` |
 | 自动构建发布 | `.github/workflows/build-release.yml` | 构建 APK，发布成滚动 Release（标签 `cn-latest`），并写入版本号 |
 | 中文覆盖率检查 | `tools/check_zh.py` | 列出还没翻译的界面文案；同步上游后会跑一次并写进 Actions 摘要 |
