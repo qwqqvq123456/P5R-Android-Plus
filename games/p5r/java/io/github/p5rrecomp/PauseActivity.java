@@ -149,6 +149,9 @@ public final class PauseActivity extends Activity {
         choices.add(new Choice(categories[3], "NX_TOUCH_OPACITY", "Opacidad de controles", "Control opacity",
                 new String[] {"50", "85", "100"}, new String[] {"Baja", "Normal", "Alta"},
                 new String[] {"Low", "Normal", "High"}));
+        choices.add(new Choice(categories[3], "NX_TOUCH_HAPTICS", "Vibración al pulsar", "Button Vibration",
+                new String[] {"0", "35", "60", "100"}, new String[] {"NO", "SUAVE", "NORMAL", "FUERTE"},
+                new String[] {"OFF", "SOFT", "NORMAL", "STRONG"}));
         choices.add(new Choice(categories[3], "NX_STICK_SENSITIVITY", "Sensibilidad de palanca", "Stick sensitivity",
                 new String[] {"50", "75", "100", "125", "150", "200"},
                 new String[] {"50%", "75%", "100%", "125%", "150%", "200%"},

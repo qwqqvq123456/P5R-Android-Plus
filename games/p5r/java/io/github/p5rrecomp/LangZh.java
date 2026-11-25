@@ -24,6 +24,9 @@ final class LangZh {
     }
 
     static {
+        put("Button Vibration", "按键震动");
+        put("A click under the thumb when a touch button is pressed (separate from in-game rumble)", "按下屏幕按键时轻微震动（与游戏内震动互不影响）");
+        put("SOFT", "轻");
         put("CONTROLS LAYOUT", "按键布局");
         put("Drag controls where you want them.\nD-pad and A B X Y move together. Red: overlapping.", "把按键拖到你想要的位置。\n方向键与 A B X Y 会一起移动。红色表示重叠。");
         put("RESET", "重置");

@@ -886,6 +886,13 @@ public class Launcher extends Activity {
                 new String[] {"50", "85", "100"},
                 new String[] {"50%", "85%", "100%"},
                 new String[] {"50%", "85%", "100%"}, 1, false));
+        options.add(new Option(TAB_CONTROLS, "NX_TOUCH_HAPTICS",
+                "Vibración al pulsar", "Button Vibration",
+                "Vibra al pulsar los botones en pantalla (independiente de la vibración del juego)",
+                "A click under the thumb when a touch button is pressed (separate from in-game rumble)",
+                new String[] {"0", "35", "60", "100"},
+                new String[] {"NO", "SUAVE", "NORMAL", "FUERTE"},
+                new String[] {"OFF", "SOFT", "NORMAL", "STRONG"}, 2, false));
         options.add(new Option(TAB_CONTROLS, "NX_STICK_SENSITIVITY",
                 "Sensibilidad palanca táctil", "Touch Stick Sensitivity",
                 "Velocidad de respuesta del stick izquierdo táctil",
@@ -2551,6 +2558,7 @@ public class Launcher extends Activity {
             else if ("NX_TOUCH_HIDE".equals(o.key)
                     || "NX_TOUCH_SIZE".equals(o.key)
                     || "NX_TOUCH_OPACITY".equals(o.key)
+                    || "NX_TOUCH_HAPTICS".equals(o.key)
                     || "NX_STICK_SENSITIVITY".equals(o.key)
                     || "NX_CAMERA_SENSITIVITY".equals(o.key)) enabled = touchOn;
 
